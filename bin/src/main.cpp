@@ -3,6 +3,8 @@
 #include "movement.h"
 #include "sensors.h"
 
+using namespace arduino;
+
 // Controller handles
 TaskHandle_t controller_handle = NULL;
 TaskHandle_t esc_handle = NULL;
@@ -25,10 +27,8 @@ uint8_t all_updated_reg = 0x00;
 
 void setup()
 {
-#ifdef __DEBUG
     // Init debug
     Serial.begin(__DEBUG_BAUD);
-#endif
 
     // Init controllers
     if (!init_controllers())
@@ -37,12 +37,10 @@ void setup()
         while (1)
             ;
     }
-#ifdef __DEBUG
     else
     {
         Serial.println("Successfully initialized controllers");
     }
-#endif
 
     // Init sensors
     if (!init_sensors())
@@ -51,12 +49,17 @@ void setup()
         while (1)
             ;
     }
-#ifdef __DEBUG
     else
     {
         Serial.println("Successfully initialized sensors");
     }
-#endif
+
+    // Init interrupts
+    attachInterrupt(digitalPinToInterrupt(BNO08X_INT), []() {
+        BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+        vTaskNotifyGiveFromISR(imu_handle, &xHigherPriorityTaskWoken);
+        portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+    }, FALLING);
 
     // Init mutexes
     SemaphoreHandle_t sensors_data_old_mutex = xSemaphoreCreateMutex();

@@ -2,13 +2,17 @@
 #define COMMON
 
 #include "Arduino.h"
-#include "SPI.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "SPI.h"
+#include <Adafruit_BNO08x.h>
+#include <Adafruit_DPS310.h>
+
 #include <stdexcept>
 
+
 // DEBUG PARAMETERS
-#define __DEBUG // Comment out to enter debug mode
+#define __DEBUG // [UNUSED] Comment out to enter debug mode
 #define __DEBUG_BAUD 115200
 
 // SPI PARAMETERS
@@ -23,7 +27,12 @@
 #define ESC1_PWM_PIN 
 #define ESC2_PWM_PIN 
 #define ESC3_PWM_PIN 
-#define ESC4_PWM_PIN 
+#define ESC4_PWM_PIN
+
+// IMU PARAMETERS
+#define BNO08X_CS 10
+#define BNO08X_INT 9
+#define BNO08X_RESET 5
 
 // === SENSORS STRUCTS DEFINITION ===
 struct optical_flow_data
