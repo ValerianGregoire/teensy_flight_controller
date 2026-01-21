@@ -1,12 +1,29 @@
 #pragma once
 
-#include <Arduino.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/semphr.h>
+#ifdef B1
+#undef B1
+#endif
+#ifdef B0
+#undef B0
+#endif
+
+#include <Eigen/Dense>
+
+#include <Arduino.h>      // Must be first
+using arduino::LSBFIRST;      // rendre LSBFIRST visible globalement
+using arduino::MSBFIRST;
+using arduino::OUTPUT;
+using arduino::HIGH;
+using arduino::LOW;
+#include <SPI.h>
+#include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_DPS310.h>
+#include <Adafruit_BNO08x.h>
 #include "Bitcraze_PMW3901.h"
-#include <SPI.h>
+#include <Arduino_FreeRTOS.h>
+#include <semphr.h>
+
 
 // Serial config
 #define SERIAL_BAUD 115200
@@ -17,7 +34,8 @@
 // Pin config
 #define DPS310_CS 22
 #define PMW3901_CS 25
-#define BNO310_CS
+#define BNO08X_CS 23
+#define BNO08X_RESET 24
 
 
 #define HSPI_MOSI 13
@@ -53,9 +71,12 @@ struct IMUData
     float ax;
     float ay;
     float az;
-    float r;
     float p;
-    float s;
+    float q;
+    float r;
+    float roll;
+    float pitch;
+    float yaw;
 };
 
 // Let tasks access these structs before declaration in main
@@ -70,8 +91,11 @@ extern SemaphoreHandle_t ofsMutex;
 extern SemaphoreHandle_t lidarMutex;
 extern SemaphoreHandle_t imuMutex;
 extern SemaphoreHandle_t vspiMutex; // for VSPI peripheral sharing
+extern SemaphoreHandle_t hspiMutex; // for HSPI peripheral sharing
 
 // Runtime variables
-extern SPIClass vspi;
+extern SPIClass &vspi;
+extern SPIClass &hspi;
 extern Adafruit_DPS310 dps;
 extern Bitcraze_PMW3901 flow;
+extern Adafruit_BNO08x bno08x;

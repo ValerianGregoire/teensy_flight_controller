@@ -3,7 +3,26 @@
 #include <Arduino.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_DPS310.h>
+#include "Bitcraze_PMW3901.h"
+#include <Adafruit_BNO08x.h>
 #include <SPI.h>
+
+void setReports(void)
+{
+  Serial.println("Setting desired reports");
+  if (!bno08x.enableReport(SH2_LINEAR_ACCELERATION))
+  {
+    Serial.println("Could not enable accelerometer");
+  }
+
+  if (!bno08x.enableReport(SH2_GAME_ROTATION_VECTOR)) {
+    Serial.println("Could not enable game rotation vector");
+  }
+
+  if (! bno08x.enableReport(SH2_GYROSCOPE_CALIBRATED)) {
+    Serial.println("Could not enable gyroscope");
+  }
+}
 
 void barometer(void *params)
 {
@@ -154,6 +173,93 @@ void lidar(void *params)
     }
 }
 
+void imu(void *params)
+{
+    // Init
+    float ax = 0.0f;
+    float ay = 0.0f;
+    float az = 0.0f;
+    float wx = 0.0f;
+    float wy = 0.0f;
+    float wz = 0.0f;
+    float qw = 1.0f;
+    float qx = 0.0f;
+    float qy = 0.0f;
+    float qz = 0.0f;
+
+    sh2_SensorValue_t sensorValue;
+
+    // Enable reports once
+    setReports();
+
+    while (true)
+    {
+        // Handle sensor reset
+        if (bno08x.wasReset()) {
+            setReports();
+        }
+
+        // Lock SPI (or I2C)
+        if (xSemaphoreTake(hspiMutex, portMAX_DELAY))
+        {
+            if (bno08x.getSensorEvent(&sensorValue))
+            {
+                xSemaphoreGive(hspiMutex);
+
+                // Decode event
+                switch (sensorValue.sensorId)
+                {
+                case SH2_LINEAR_ACCELERATION:
+                    ax = sensorValue.un.linearAcceleration.x;
+                    ay = sensorValue.un.linearAcceleration.y;
+                    az = sensorValue.un.linearAcceleration.z;
+                    break;
+
+                case SH2_GYROSCOPE_CALIBRATED:
+                    wx = sensorValue.un.gyroscope.x;
+                    wy = sensorValue.un.gyroscope.y;
+                    wz = sensorValue.un.gyroscope.z;
+                    break;
+
+                case SH2_GAME_ROTATION_VECTOR:
+                    qw = sensorValue.un.gameRotationVector.real;
+                    qx = sensorValue.un.gameRotationVector.i;
+                    qy = sensorValue.un.gameRotationVector.j;
+                    qz = sensorValue.un.gameRotationVector.k;
+                    break;
+                }
+            }
+            else
+            {
+                xSemaphoreGive(hspiMutex);
+            }
+        }
+
+        // Publish IMU data (atomic snapshot)
+        if (xSemaphoreTake(imuMutex, portMAX_DELAY))
+        {
+            imuData.ax = ax;
+            imuData.ay = ay;
+            imuData.az = az;
+
+            imuData.p = wx;
+            imuData.q = wy;
+            imuData.r = wz;
+
+            // Convert quaternion to Euler angles (in degrees)
+            imuData.roll = atan2f(2.0f * (qw * qx + qy * qz), 1.0f - 2.0f * (qx * qx + qy * qy)) * (180.0f / PI);
+            imuData.pitch = asinf(2.0f * (qw * qy - qz * qx)) * (180.0f / PI);
+            imuData.yaw = atan2f(2.0f * (qw * qz + qx * qy), 1.0f - 2.0f * (qy * qy + qz * qz)) * (180.0f / PI);
+
+            xSemaphoreGive(imuMutex);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(5)); // 200 Hz
+    }
+    vTaskDelete(nullptr);
+}
+
+
 void logger(void *params)
 {
     // Barometer variables
@@ -174,12 +280,15 @@ void logger(void *params)
     float lidar_temperature; // In *C
 
     // IMU variables
-    float ax;
-    float ay;
-    float az;
-    float r;
-    float p;
-    float s;
+    float imu_ax;
+    float imu_ay;
+    float imu_az;
+    float imu_p;
+    float imu_q;
+    float imu_r;
+    float imu_roll;
+    float imu_pitch;
+    float imu_yaw;
 
     while (true)
     {
