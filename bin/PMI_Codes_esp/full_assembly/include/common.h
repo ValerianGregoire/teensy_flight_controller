@@ -79,6 +79,15 @@ struct IMUData
     float yaw;
 };
 
+// State estimate struct
+struct StateEstimate {
+    Eigen::Vector3d position;
+    Eigen::Vector3d velocity;
+};
+
+extern StateEstimate stateEstimate;
+
+
 // Let tasks access these structs before declaration in main
 extern BarometerData barometerData;
 extern OFSData ofsData;
@@ -92,6 +101,7 @@ extern SemaphoreHandle_t lidarMutex;
 extern SemaphoreHandle_t imuMutex;
 extern SemaphoreHandle_t vspiMutex; // for VSPI peripheral sharing
 extern SemaphoreHandle_t hspiMutex; // for HSPI peripheral sharing
+extern SemaphoreHandle_t stateMutex;
 
 // Runtime variables
 extern SPIClass &vspi;

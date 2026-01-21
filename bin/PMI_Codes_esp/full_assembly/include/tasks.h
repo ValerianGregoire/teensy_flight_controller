@@ -12,6 +12,9 @@ void lidar(void *params);
 // Gets accelerations/tilt/yaw through VSPI
 void imu(void *params);
 
+// Extended Kalman Filter to fuse sensor data
+void ekf(void *params);
+
 // Sends dshot commands to ESCs
 void esc(void *params);
 

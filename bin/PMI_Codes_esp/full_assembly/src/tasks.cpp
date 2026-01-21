@@ -260,6 +260,132 @@ void imu(void *params)
 }
 
 
+void ekfTask(void *pvParameters)
+{
+    /* --- INIT (from your setup()) --- */
+    /* ================= EKF GLOBALS ================= */
+    
+    // Frequency of the IMU
+    float T = 1.0f / 100.0f;  // 100 Hz
+    Eigen::Matrix<double, 3,1> acc;
+    Eigen::Matrix<double, 3,1> attitude;
+    Eigen::Matrix<double, 3,3> R; // Rotation matrix
+
+    // Identity matrix definition 
+    Eigen::Matrix<double, 3, 3> I3 = Eigen::Matrix<double, 3, 3>::Identity();
+    Eigen::Matrix<double, 4, 4> I4 = Eigen::Matrix<double, 4, 4>::Identity();
+
+    Eigen::Matrix<double, 6, 1> Xkk_1 = Eigen::Matrix<double, 6, 1>::Zero();
+    Eigen::Matrix<double, 6, 1> Xkk;
+    Eigen::Matrix<double, 6, 6> Pk_1k_1;
+    Eigen::Matrix<double, 6, 6> Pkk_1;
+    Eigen::Matrix<double, 6, 6> Pkk;
+
+    // Prediction model matrices definition 
+    Eigen::Matrix<double, 6, 6> Fk;
+    Eigen::Matrix<double, 6, 6> Gk = Eigen::Matrix<double, 6, 6>::Identity()*T;
+    Eigen::Matrix<double, 6, 6> Hk = Eigen::Matrix<double, 6, 6>::Identity()*0.1*T;
+
+    // OFS Model 
+    Eigen::Matrix<double, 2, 6> C_OFS = Eigen::Matrix<double, 2, 6>::Zero();
+    Eigen::Matrix<double, 2, 2> L_OFS = Eigen::Matrix<double, 2, 2>::Identity()*0.1;
+    Eigen::Matrix<double, 2,2> Py_OFS;
+    Eigen::Matrix<double, 6,2> K_OFS;
+    Eigen::Matrix<double, 2,1> ymeas_OFS;
+    Eigen::Matrix<double, 2,1> ypred_OFS;
+
+    // Barometer model 
+    Eigen::Matrix<double, 1, 6> C_baro = Eigen::Matrix<double, 1, 6>::Zero();
+    Eigen::Matrix<double, 1, 1> L_baro = Eigen::Matrix<double, 1, 1>::Identity()*0.1;
+    Eigen::Matrix<double, 1,1> Py_baro;
+    Eigen::Matrix<double, 6,1> K_baro;
+    double ymeas_baro = 0.0;
+    double ypred_baro = 0.0;
+
+    Xkk_1.setZero();
+    Xkk.setZero();
+    Pk_1k_1.setIdentity();
+    Pkk = Pk_1k_1;
+
+    C_OFS.setZero();
+    C_OFS(0,3) = 1;
+    C_OFS(1,4) = 1;
+
+    C_baro.setZero();
+    C_baro(0,2) = 1;
+
+    TickType_t last = xTaskGetTickCount();
+    const TickType_t period = pdMS_TO_TICKS(10);
+
+    IMUData imu;
+    BarometerData baro;
+    OFSData ofs;
+
+    for (;;)
+    {
+        vTaskDelayUntil(&last, period);
+
+        if (xSemaphoreTake(imuMutex, portMAX_DELAY)) {
+            imu = imuData;
+            xSemaphoreGive(imuMutex);
+        }
+
+        if (xSemaphoreTake(barometerMutex, 0)) {
+            baro = barometerData;
+            xSemaphoreGive(barometerMutex);
+        }
+
+        if (xSemaphoreTake(ofsMutex, 0)) {
+            ofs = ofsData;
+            xSemaphoreGive(ofsMutex);
+        }
+
+        // EKF steps
+        Fk.setIdentity();
+        Fk(0,3) = T;
+        Fk(1,4) = T;
+        Fk(2,5) = T;
+        acc << imu.ax, imu.ay, imu.az;
+        attitude << imu.roll * PI / 180.0f, imu.pitch * PI / 180.0f, imu.yaw * PI / 180.0f;
+
+        // Rotation matrix from euler angles
+        R = Eigen::AngleAxisd(attitude(2), Eigen::Vector3d::UnitZ()) *
+            Eigen::AngleAxisd(attitude(1), Eigen::Vector3d::UnitY()) *
+            Eigen::AngleAxisd(attitude(0), Eigen::Vector3d::UnitX());
+
+        Eigen::Vector3d g(0, 0, 9.81);
+
+        Xkk_1.block<3,1>(0,0) += T * Xkk_1.block<3,1>(3,0) + 0.5 * T * T * ( R * (acc )-g); // position
+        Xkk_1.block<3,1>(3,0) += T * ( R * (acc)-g );             // velocity
+        Pkk_1 = Fk * Pk_1k_1 * Fk.transpose() + Hk;
+        
+        ypred_baro = C_baro * Xkk_1;
+        ymeas_baro = baro.absoluteAltitude;
+        Py_baro = C_baro * Pkk_1 * C_baro.transpose() + L_baro;
+        K_baro = Pkk_1 * C_baro.transpose() * Py_baro.inverse();
+        Xkk = Xkk_1 + K_baro * ( ymeas_baro - ypred_baro );
+        Pkk = Pkk_1 - K_baro * C_baro * Pkk_1;
+
+        ypred_OFS = C_OFS * Xkk;
+        // TO BE CHECKED: VALUE SHOULD BE A SPEED
+        ymeas_OFS << ofs.distanceX, ofs.distanceY;
+        Py_OFS    = C_OFS * Pkk * C_OFS.transpose() + L_OFS;
+        K_OFS     = Pkk * C_OFS.transpose() * Py_OFS.inverse();
+        Xkk       = Xkk + K_OFS * (ymeas_OFS - ypred_OFS);
+        Pkk       = Pkk - K_OFS * C_OFS * Pkk;
+
+
+        Pk_1k_1 = Pkk;
+        Xkk_1 = Xkk;
+
+        if (xSemaphoreTake(stateMutex, portMAX_DELAY)) {
+            stateEstimate.position = Xkk.block<3,1>(0,0);
+            stateEstimate.velocity = Xkk.block<3,1>(3,0);
+            xSemaphoreGive(stateMutex);
+        }
+    }
+}
+
 void logger(void *params)
 {
     // Barometer variables
