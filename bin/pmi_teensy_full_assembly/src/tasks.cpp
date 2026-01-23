@@ -1,12 +1,5 @@
 #include "tasks.h"
 #include "common.h"
-#include <Arduino.h>
-#include <Adafruit_Sensor.h>
-#include <Adafruit_DPS310.h>
-#include "Bitcraze_PMW3901.h"
-#include <Adafruit_BNO08x.h>
-#include <SPI.h>
-
 
 void barometer(void *params)
 {
@@ -263,7 +256,7 @@ void imu(void *params)
     vTaskDelete(nullptr);
 }
 
-void ekfTask(void *pvParameters)
+void ekf(void *pvParameters)
 {
     /* --- INIT (from your setup()) --- */
     /* ================= EKF GLOBALS ================= */
@@ -386,6 +379,133 @@ void ekfTask(void *pvParameters)
             stateEstimate.velocity = Xkk.block<3,1>(3,0);
             xSemaphoreGive(stateMutex);
         }
+    }
+}
+
+void fiber(void *params)
+{
+    const TickType_t xDelay = 40 / portTICK_PERIOD_MS; // 25 Hz frequency
+    const uint32_t FAILSAFE_TIMEOUT_MS = 500;          // 0.5s: Stop moving
+    const uint32_t LANDING_TIMEOUT_MS = 3000;          // 3.0s: Start landing
+
+    uint32_t lastPacketTime = millis();
+    uint8_t latestCmd = 0;
+
+    while (true)
+    {
+        bool newPacketFound = false;
+
+        // 1. Drain the buffer to find the most recent packet
+        while (Serial3.available() >= 3)
+        {
+            if (Serial3.read() == 0xFE)
+            {
+                uint8_t cmd = Serial3.read();
+                uint8_t footer = Serial3.read();
+                if (footer == 0xFF)
+                {
+                    latestCmd = cmd;
+                    newPacketFound = true;
+                }
+            }
+        }
+
+        if (xSemaphoreTake(fiberMutex, portMAX_DELAY))
+        {
+            if (newPacketFound)
+            {
+                lastPacketTime = millis(); // Reset heartbeat
+
+                // Normal Command Processing
+                fiberData.vx = 0;
+                fiberData.vy = 0;
+                fiberData.vz = 0;
+                fiberData.yaw_rate = 0;
+
+                if (latestCmd & (1 << 0))
+                    fiberData.vx += 0.5; // Z
+                if (latestCmd & (1 << 1))
+                    fiberData.vy += 0.5; // Q
+                if (latestCmd & (1 << 2))
+                    fiberData.vx -= 0.5; // S
+                if (latestCmd & (1 << 3))
+                    fiberData.vy -= 0.5; // D
+                if (latestCmd & (1 << 4))
+                    fiberData.vz += 0.4; // I (Up)
+                if (latestCmd & (1 << 5))
+                    fiberData.vz -= 0.4; // K (Down)
+                if (latestCmd & (1 << 6))
+                    fiberData.yaw_rate += 30.0; // J
+                if (latestCmd & (1 << 7))
+                    fiberData.yaw_rate -= 30.0; // L
+            }
+            else
+            {
+                // 2. Failsafe Logic (No packet received)
+                uint32_t elapsed = millis() - lastPacketTime;
+
+                if (elapsed > LANDING_TIMEOUT_MS)
+                {
+                    // Stage 2: Sustained Loss -> Auto-Land
+                    fiberData.vx = 0;
+                    fiberData.vy = 0;
+                    fiberData.yaw_rate = 0;
+                    fiberData.vz = -0.3; // Gentle descent (approx 30cm/s)
+                }
+                else if (elapsed > FAILSAFE_TIMEOUT_MS)
+                {
+                    // Stage 1: Momentary Loss -> Hover Stationary
+                    fiberData.vx = 0;
+                    fiberData.vy = 0;
+                    fiberData.vz = 0;
+                    fiberData.yaw_rate = 0;
+                }
+            }
+            xSemaphoreGive(fiberMutex);
+        }
+        vTaskDelay(xDelay);
+    }
+}
+
+void esc(void *params)
+{
+    // 1. Attach Motors to Pins
+    m1.attach(ESC1_PIN);
+    m2.attach(ESC2_PIN);
+    m3.attach(ESC3_PIN);
+    m4.attach(ESC4_PIN);
+
+    // 2. ARMING SEQUENCE
+    // Most ESCs require 1000us for ~2 seconds to initialize
+    m1.writeMicroseconds(1000);
+    m2.writeMicroseconds(1000);
+    m3.writeMicroseconds(1000);
+    m4.writeMicroseconds(1000);
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+
+    const TickType_t xDelay = 5 / portTICK_PERIOD_MS; // 200Hz Update rate
+
+    while (true)
+    {
+        int pwm[4] = {1000, 1000, 1000, 1000};
+
+        if (xSemaphoreTake(escMutex, portMAX_DELAY))
+        {
+            // Map 0.0-1.0 to 1000-2000 microseconds
+            pwm[0] = 1000 + (int)(std::clamp(escData.m1, 0.0f, 1.0f) * 1000);
+            pwm[1] = 1000 + (int)(std::clamp(escData.m2, 0.0f, 1.0f) * 1000);
+            pwm[2] = 1000 + (int)(std::clamp(escData.m3, 0.0f, 1.0f) * 1000);
+            pwm[3] = 1000 + (int)(std::clamp(escData.m4, 0.0f, 1.0f) * 1000);
+            xSemaphoreGive(escMutex);
+        }
+
+        // 3. Output PWM signals
+        m1.writeMicroseconds(pwm[0]);
+        m2.writeMicroseconds(pwm[1]);
+        m3.writeMicroseconds(pwm[2]);
+        m4.writeMicroseconds(pwm[3]);
+
+        vTaskDelay(xDelay);
     }
 }
 

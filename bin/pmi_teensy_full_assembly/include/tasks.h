@@ -15,7 +15,10 @@ void imu(void *params);
 // Extended Kalman Filter to fuse sensor data
 void ekf(void *params);
 
-// Sends dshot commands to ESCs
+// Sends and receives data through optic fiber communication
+void fiber(void *params);
+
+// Sends PWM commands to ESCs
 void esc(void *params);
 
 // Prints updated data

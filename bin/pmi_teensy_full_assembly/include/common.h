@@ -23,6 +23,8 @@ using arduino::LOW;
 #include "Bitcraze_PMW3901.h"
 #include <Arduino_FreeRTOS.h>
 #include <semphr.h>
+#include <Servo.h>
+#include <algorithm>
 
 // Serial config
 #define SERIAL_BAUD 115200
@@ -41,6 +43,11 @@ using arduino::LOW;
 #define BNO08X_CS 19
 #define BNO08X_RESET 18
 #define BNO08X_INT 17
+
+#define ESC1_PIN 2
+#define ESC2_PIN 3
+#define ESC3_PIN 4
+#define ESC4_PIN 5
 
 /* PIN SETUP
 DPS310 -> Teensy 4.1:
@@ -76,10 +83,16 @@ PMW3901 -> Teensy 4.1:
     - GND  -> GND
 
 TF-Luna -> Teensy 4.1:
-    - Red Wire -> 3V
+    - Red Wire      -> 3V
     - Blue Wire (2) -> 8
     - Blue Wire (3) -> 7
     - Black Wire    -> GND
+
+ESC -> Teensy 4.1:
+    - ESC1 -> 2
+    - ESC2 -> 3
+    - ESC3 -> 4
+    - ESC4 -> 5
 */
 
 // Data structs
@@ -119,29 +132,44 @@ struct IMUData
     float yaw;
 };
 
-// State estimate struct
 struct StateEstimate {
     Eigen::Vector3d position;
     Eigen::Vector3d velocity;
 };
 
-extern StateEstimate stateEstimate;
+struct FiberData { // User inputs
+    float vx;
+    float vy;
+    float vz;
+    float yaw_rate;
+};
 
+struct ESCData {
+    float m1; // 0.0 to 1.0
+    float m2; // 0.0 to 1.0
+    float m3; // 0.0 to 1.0
+    float m4; // 0.0 to 1.0
+};
 
 // Let tasks access these structs before declaration in main
 extern BarometerData barometerData;
 extern OFSData ofsData;
 extern LidarData lidarData;
 extern IMUData imuData;
+extern StateEstimate stateEstimate;
+extern FiberData fiberData;
+extern ESCData escData;
 
 // Mutexes to manage data sharing
 extern SemaphoreHandle_t barometerMutex;
 extern SemaphoreHandle_t ofsMutex;
 extern SemaphoreHandle_t lidarMutex;
 extern SemaphoreHandle_t imuMutex;
-extern SemaphoreHandle_t spiMutex; // for VSPI peripheral sharing
-extern SemaphoreHandle_t spi1Mutex; // for HSPI peripheral sharing
+extern SemaphoreHandle_t spiMutex; // for SPI peripheral sharing
+extern SemaphoreHandle_t spi1Mutex; // for SPI1 peripheral sharing
 extern SemaphoreHandle_t stateMutex;
+extern SemaphoreHandle_t fiberMutex;
+extern SemaphoreHandle_t escMutex;
 
 // Runtime variables
 extern SPIClass &spi;
@@ -149,3 +177,4 @@ extern SPIClass &spi1;
 extern Adafruit_DPS310 dps;
 extern Bitcraze_PMW3901 flow;
 extern Adafruit_BNO08x bno08x;
+extern Servo m1, m2, m3, m4;
