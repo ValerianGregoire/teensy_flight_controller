@@ -8,13 +8,12 @@
 #endif
 
 #include <Eigen/Dense>
-
 #include <Arduino.h>
+using arduino::HIGH;
+using arduino::LOW;
 using arduino::LSBFIRST;
 using arduino::MSBFIRST;
 using arduino::OUTPUT;
-using arduino::HIGH;
-using arduino::LOW;
 #include <SPI.h>
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
@@ -25,6 +24,25 @@ using arduino::LOW;
 #include <semphr.h>
 #include <Servo.h>
 #include <algorithm>
+
+// Performance measurement macros
+// Place at start of loop
+#define PERF_START(metric)                           \
+    uint32_t _pStart = micros();                     \
+    if (metric.lastStart > 0)                        \
+    {                                                \
+        uint32_t _diff = _pStart - metric.lastStart; \
+        if (_diff > 0)                               \
+            metric.frequency = 1000000.0f / _diff;   \
+    }                                                \
+    metric.lastStart = _pStart;
+
+// Place before vTaskDelay
+#define PERF_END(metric)                                                            \
+    uint32_t _pEnd = micros();                                                      \
+    metric.execTimeUs = _pEnd - _pStart;                                            \
+    float _periodUs = (1000000.0f / (metric.frequency > 0 ? metric.frequency : 1)); \
+    metric.cpuLoad = ((float)metric.execTimeUs / _periodUs) * 100.0f;
 
 // Serial config
 #define SERIAL_BAUD 115200
@@ -83,23 +101,39 @@ PMW3901 -> Teensy 4.1:
     - GND  -> GND
 
 TF-Luna -> Teensy 4.1:
-    - Red Wire      -> 3V
+    - Red Wire -> 3V
     - Blue Wire (2) -> 8
     - Blue Wire (3) -> 7
     - Black Wire    -> GND
-
-ESC -> Teensy 4.1:
-    - ESC1 -> 2
-    - ESC2 -> 3
-    - ESC3 -> 4
-    - ESC4 -> 5
 */
+
+// Performance metrics structs
+struct TaskPerf
+{
+    float frequency;     // Measured Hz
+    float cpuLoad;       // % of CPU time used
+    uint32_t execTimeUs; // Time taken to execute logic
+    uint32_t lastStart;  // Timestamp for freq calc
+};
+
+struct SensorHealth
+{
+    uint32_t updateCount; // Increments on every valid read
+    float actualRate;     // Hz (calculated by monitor)
+    uint32_t lastCount;   // For calculation
+};
+
+struct SystemMetrics
+{
+    TaskPerf barometer, ofs, lidar, imu, ekf, fiber, esc, logger;
+    SensorHealth barometerSensor, ofsSensor, lidarSensor, imuSensor;
+};
 
 // Data structs
 struct BarometerData
 {
-    float temperature; // In *C
-    float pressure; // In hPa
+    float temperature;      // In *C
+    float pressure;         // In hPa
     float absoluteAltitude; // In m
     float relativeAltitude; // In m
 };
@@ -132,19 +166,22 @@ struct IMUData
     float yaw;
 };
 
-struct StateEstimate {
+struct StateEstimate
+{
     Eigen::Vector3d position;
     Eigen::Vector3d velocity;
 };
 
-struct FiberData { // User inputs
+struct FiberData
+{ // User inputs
     float vx;
     float vy;
     float vz;
     float yaw_rate;
 };
 
-struct ESCData {
+struct ESCData
+{
     float m1; // 0.0 to 1.0
     float m2; // 0.0 to 1.0
     float m3; // 0.0 to 1.0
@@ -159,17 +196,19 @@ extern IMUData imuData;
 extern StateEstimate stateEstimate;
 extern FiberData fiberData;
 extern ESCData escData;
+extern SystemMetrics sysMetrics; // Global metrics
 
 // Mutexes to manage data sharing
 extern SemaphoreHandle_t barometerMutex;
 extern SemaphoreHandle_t ofsMutex;
 extern SemaphoreHandle_t lidarMutex;
 extern SemaphoreHandle_t imuMutex;
-extern SemaphoreHandle_t spiMutex; // for SPI peripheral sharing
-extern SemaphoreHandle_t spi1Mutex; // for SPI1 peripheral sharing
+extern SemaphoreHandle_t spiMutex;
+extern SemaphoreHandle_t spi1Mutex;
 extern SemaphoreHandle_t stateMutex;
 extern SemaphoreHandle_t fiberMutex;
 extern SemaphoreHandle_t escMutex;
+extern SemaphoreHandle_t serialMutex;
 
 // Runtime variables
 extern SPIClass &spi;

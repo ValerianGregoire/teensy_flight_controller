@@ -2,14 +2,14 @@
 #include "common.h"
 #include "tasks.h"
 
-// Objects
+// Peripherals
 SPIClass &spi = SPI;
 SPIClass &spi1 = SPI1;
 
+// Hardware objects
 Adafruit_DPS310 dps;
 Bitcraze_PMW3901 flow(PMW3901_CS);
 Adafruit_BNO08x bno08x(BNO08X_RESET);
-
 Servo m1, m2, m3, m4;
 
 // Structs
@@ -20,6 +20,7 @@ IMUData imuData;
 StateEstimate stateEstimate;
 FiberData fiberData;
 ESCData escData;
+SystemMetrics sysMetrics;
 
 // Mutexes
 SemaphoreHandle_t barometerMutex;
@@ -31,6 +32,7 @@ SemaphoreHandle_t spi1Mutex;
 SemaphoreHandle_t stateMutex;
 SemaphoreHandle_t fiberMutex;
 SemaphoreHandle_t escMutex;
+SemaphoreHandle_t serialMutex;
 
 void setup() {
 
@@ -53,25 +55,24 @@ void setup() {
     spi1Mutex = xSemaphoreCreateMutex();
     stateMutex = xSemaphoreCreateMutex();
     fiberMutex = xSemaphoreCreateMutex();
+    escMutex = xSemaphoreCreateMutex();
+    serialMutex = xSemaphoreCreateMutex();
 
     // Setup SPI slave CS pins
     pinMode(DPS310_CS, OUTPUT);
-    digitalWrite(DPS310_CS, HIGH);
-
     pinMode(PMW3901_CS, OUTPUT);
-    digitalWrite(PMW3901_CS, HIGH);
-
     pinMode(BNO08X_CS, OUTPUT);
-    digitalWrite(BNO08X_CS, HIGH);
-
     pinMode(BNO08X_INT, OUTPUT);
-    digitalWrite(BNO08X_INT, HIGH);
-
     pinMode(BNO08X_RESET, OUTPUT);
+    
+    digitalWrite(DPS310_CS, HIGH);
+    digitalWrite(PMW3901_CS, HIGH);
+    digitalWrite(BNO08X_CS, HIGH);
+    digitalWrite(BNO08X_INT, HIGH);
     digitalWrite(BNO08X_RESET, HIGH);
 
     // Start SPI peripherals
-    spi.begin(); // Init SPI
+    spi.begin();
 
     spi1.setMOSI(SPI1_MOSI);
     spi1.setMISO(SPI1_MISO);
@@ -119,25 +120,14 @@ void setup() {
     }
 
     // Create tasks
-    if (baroInit)
-    {
-        xTaskCreate(barometer, "barometer", 4096, nullptr, 2, nullptr);
-    }
-
-    if (ofsInit)
-    {
-        xTaskCreate(ofs, "ofs", 4096, nullptr, 2, nullptr);
-    }
-    
-    if (imuInit)
-    {
-        xTaskCreate(imu, "imu", 4096, nullptr, 1, nullptr);
-    }
-    
+    if (baroInit) xTaskCreate(barometer, "barometer", 4096, nullptr, 2, nullptr);
+    if (ofsInit) xTaskCreate(ofs, "ofs", 4096, nullptr, 2, nullptr);
+    if (imuInit) xTaskCreate(imu, "imu", 4096, nullptr, 1, nullptr);
     xTaskCreate(lidar, "lidar", 2048, nullptr, 2, nullptr);
     xTaskCreate(fiber, "fiber", 2048, nullptr, 2, nullptr);
-    xTaskCreate(fiber, "esc", 2048, nullptr, 2, nullptr);
+    xTaskCreate(esc, "esc", 2048, nullptr, 2, nullptr);
     xTaskCreate(logger, "logger", 2048, nullptr, 2, nullptr);
+    xTaskCreate(perfMonitor, "perfMonitor", 2048, nullptr, 1, nullptr);
 
     // Run tasks
     vTaskStartScheduler();

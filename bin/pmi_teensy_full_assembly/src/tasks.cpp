@@ -13,6 +13,8 @@ void barometer(void *params)
     // Loop
     while (true)
     {
+        PERF_START(sysMetrics.barometer);
+
         if (xSemaphoreTake(spiMutex, portMAX_DELAY))
         {
             sensors_event_t temp_event, pressure_event;
@@ -23,13 +25,12 @@ void barometer(void *params)
                 pressure = pressure_event.pressure;
 
                 float temp = dps.readAltitude(pastPressure);
-                if (abs(temp) < 5)
-                {
-                    relativeAltitude = temp;
-                }
+                if (abs(temp) < 5) relativeAltitude = temp;
 
                 absoluteAltitude = dps.readAltitude(1013.25f);
                 pastPressure = pressure_event.pressure;
+
+                sysMetrics.barometerSensor.updateCount++;
             }
             xSemaphoreGive(spiMutex);
         }
@@ -43,6 +44,7 @@ void barometer(void *params)
             xSemaphoreGive(barometerMutex);
         }
 
+        PERF_END(sysMetrics.barometer);
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 
@@ -72,6 +74,8 @@ void ofs(void *params)
     // Loop
     while (true)
     {
+        PERF_START(sysMetrics.ofs);
+
         // Read delta X and delta Y
         flow.readMotionCount(&deltaX, &deltaY);
 
@@ -97,6 +101,9 @@ void ofs(void *params)
             xSemaphoreGive(ofsMutex);
         }
 
+        if(deltaX != 0 || deltaY != 0) sysMetrics.ofsSensor.updateCount++;
+
+        PERF_END(sysMetrics.ofs);
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 
@@ -113,6 +120,8 @@ void lidar(void *params)
     // Loop
     while (true)
     {
+        PERF_START(sysMetrics.lidar);
+
         if (Serial2.available() >= 9)
         {
             if (Serial2.read() == 0x59)
@@ -142,10 +151,12 @@ void lidar(void *params)
                             lidarData.temperature = temperature;
                             xSemaphoreGive(lidarMutex);
                         }
+                        sysMetrics.lidarSensor.updateCount++;
                     }
                 }
             }
         }
+        PERF_END(sysMetrics.lidar);
         vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
@@ -155,21 +166,12 @@ void imu(void *params)
 
     auto setReports = [](void)
     {
-        Serial.println("[IMU] Setting desired reports");
         if (!bno08x.enableReport(SH2_LINEAR_ACCELERATION))
-        {
-            Serial.println("[IMU] Could not enable accelerometer");
-        }
-
+            Serial.println("IMU Fail: Accel");
         if (!bno08x.enableReport(SH2_GAME_ROTATION_VECTOR))
-        {
-            Serial.println("[IMU] Could not enable game rotation vector");
-        }
-
+            Serial.println("IMU Fail: RotVec");
         if (!bno08x.enableReport(SH2_GYROSCOPE_CALIBRATED))
-        {
-            Serial.println("[IMU] Could not enable gyroscope");
-        }
+            Serial.println("IMU Fail: Gyro");
     };
 
     // Init
@@ -191,6 +193,8 @@ void imu(void *params)
 
     while (true)
     {
+        PERF_START(sysMetrics.imu);
+
         // Handle sensor reset
         if (bno08x.wasReset()) {
             setReports();
@@ -202,6 +206,9 @@ void imu(void *params)
             if (bno08x.getSensorEvent(&sensorValue))
             {
                 xSemaphoreGive(spi1Mutex);
+
+                if (sensorValue.sensorId == SH2_GAME_ROTATION_VECTOR)
+                    sysMetrics.imuSensor.updateCount++;
 
                 // Decode event
                 switch (sensorValue.sensorId)
@@ -232,7 +239,7 @@ void imu(void *params)
             }
         }
 
-        // Publish IMU data (atomic snapshot)
+        // Publish IMU data
         if (xSemaphoreTake(imuMutex, portMAX_DELAY))
         {
             imuData.ax = ax;
@@ -251,16 +258,14 @@ void imu(void *params)
             xSemaphoreGive(imuMutex);
         }
 
+        PERF_END(sysMetrics.imu);
         vTaskDelay(pdMS_TO_TICKS(5)); // 200 Hz
     }
     vTaskDelete(nullptr);
 }
 
 void ekf(void *pvParameters)
-{
-    /* --- INIT (from your setup()) --- */
-    /* ================= EKF GLOBALS ================= */
-    
+{    
     // Frequency of the IMU
     float T = 1.0f / 100.0f;  // 100 Hz
     Eigen::Matrix<double, 3,1> acc;
@@ -319,8 +324,8 @@ void ekf(void *pvParameters)
 
     for (;;)
     {
-        vTaskDelayUntil(&last, period);
-
+        PERF_START(sysMetrics.ekf);
+        
         if (xSemaphoreTake(imuMutex, portMAX_DELAY)) {
             imu = imuData;
             xSemaphoreGive(imuMutex);
@@ -330,7 +335,7 @@ void ekf(void *pvParameters)
             baro = barometerData;
             xSemaphoreGive(barometerMutex);
         }
-
+        
         if (xSemaphoreTake(ofsMutex, 0)) {
             ofs = ofsData;
             xSemaphoreGive(ofsMutex);
@@ -346,11 +351,11 @@ void ekf(void *pvParameters)
 
         // Rotation matrix from euler angles
         R = Eigen::AngleAxisd(attitude(2), Eigen::Vector3d::UnitZ()) *
-            Eigen::AngleAxisd(attitude(1), Eigen::Vector3d::UnitY()) *
-            Eigen::AngleAxisd(attitude(0), Eigen::Vector3d::UnitX());
-
+        Eigen::AngleAxisd(attitude(1), Eigen::Vector3d::UnitY()) *
+        Eigen::AngleAxisd(attitude(0), Eigen::Vector3d::UnitX());
+        
         Eigen::Vector3d g(0, 0, 9.81);
-
+        
         Xkk_1.block<3,1>(0,0) += T * Xkk_1.block<3,1>(3,0) + 0.5 * T * T * ( R * (acc )-g); // position
         Xkk_1.block<3,1>(3,0) += T * ( R * (acc)-g );             // velocity
         Pkk_1 = Fk * Pk_1k_1 * Fk.transpose() + Hk;
@@ -361,7 +366,7 @@ void ekf(void *pvParameters)
         K_baro = Pkk_1 * C_baro.transpose() * Py_baro.inverse();
         Xkk = Xkk_1 + K_baro * ( ymeas_baro - ypred_baro );
         Pkk = Pkk_1 - K_baro * C_baro * Pkk_1;
-
+        
         ypred_OFS = C_OFS * Xkk;
         // TO BE CHECKED: VALUE SHOULD BE A SPEED
         ymeas_OFS << ofs.distanceX, ofs.distanceY;
@@ -369,16 +374,19 @@ void ekf(void *pvParameters)
         K_OFS     = Pkk * C_OFS.transpose() * Py_OFS.inverse();
         Xkk       = Xkk + K_OFS * (ymeas_OFS - ypred_OFS);
         Pkk       = Pkk - K_OFS * C_OFS * Pkk;
-
-
+        
+        
         Pk_1k_1 = Pkk;
         Xkk_1 = Xkk;
-
+        
         if (xSemaphoreTake(stateMutex, portMAX_DELAY)) {
             stateEstimate.position = Xkk.block<3,1>(0,0);
             stateEstimate.velocity = Xkk.block<3,1>(3,0);
             xSemaphoreGive(stateMutex);
         }
+
+        PERF_END(sysMetrics.ekf);
+        vTaskDelayUntil(&last, period);
     }
 }
 
@@ -393,6 +401,8 @@ void fiber(void *params)
 
     while (true)
     {
+        PERF_START(sysMetrics.fiber);
+
         bool newPacketFound = false;
 
         // 1. Drain the buffer to find the most recent packet
@@ -463,8 +473,11 @@ void fiber(void *params)
             }
             xSemaphoreGive(fiberMutex);
         }
+
+        PERF_END(sysMetrics.fiber);
         vTaskDelay(xDelay);
     }
+    vTaskDelete(nullptr);
 }
 
 void esc(void *params)
@@ -487,6 +500,8 @@ void esc(void *params)
 
     while (true)
     {
+        PERF_START(sysMetrics.esc);
+
         int pwm[4] = {1000, 1000, 1000, 1000};
 
         if (xSemaphoreTake(escMutex, portMAX_DELAY))
@@ -505,8 +520,10 @@ void esc(void *params)
         m3.writeMicroseconds(pwm[2]);
         m4.writeMicroseconds(pwm[3]);
 
+        PERF_END(sysMetrics.esc);
         vTaskDelay(xDelay);
     }
+    vTaskDelete(nullptr);
 }
 
 void logger(void *params)
@@ -541,6 +558,8 @@ void logger(void *params)
 
     while (true)
     {
+        PERF_START(sysMetrics.logger);
+
         // Get barometer data
         if (xSemaphoreTake(barometerMutex, portMAX_DELAY))
         {
@@ -589,48 +608,102 @@ void logger(void *params)
         }
 
         // Print all data
-        Serial.print(">barometer_temperature:");
-        Serial.println(barometer_temperature);
-        Serial.print(">barometer_pressure:");
-        Serial.println(barometer_pressure);
-        Serial.print(">barometer_absoluteAltitude:");
-        Serial.println(barometer_absoluteAltitude);
-        Serial.print(">barometer_relativeAltitude:");
-        Serial.println(barometer_relativeAltitude);
-        Serial.print(">ofs_deltaX:");
-        Serial.println(ofs_deltaX);
-        Serial.print(">ofs_deltaY:");
-        Serial.println(ofs_deltaY);
-        Serial.print(">ofs_distanceX:");
-        Serial.println(ofs_distanceX);
-        Serial.print(">ofs_distanceY:");
-        Serial.println(ofs_distanceY);
-        Serial.print(">lidar_distance:");
-        Serial.println(lidar_distance);
-        Serial.print(">lidar_strength:");
-        Serial.println(lidar_strength);
-        Serial.print(">lidar_temperature:");
-        Serial.println(lidar_temperature);
-        Serial.print(">imu_ax:");
-        Serial.println(imu_ax);
-        Serial.print(">imu_ay:");
-        Serial.println(imu_ay);
-        Serial.print(">imu_az:");
-        Serial.println(imu_az);
-        Serial.print(">imu_p:");
-        Serial.println(imu_p);
-        Serial.print(">imu_q:");
-        Serial.println(imu_q);
-        Serial.print(">imu_r:");
-        Serial.println(imu_r);
-        Serial.print(">imu_roll:");
-        Serial.println(imu_roll);
-        Serial.print(">imu_pitch:");
-        Serial.println(imu_pitch);
-        Serial.print(">imu_yaw:");
-        Serial.println(imu_yaw);
-
+        if (xSemaphoreTake(serialMutex, portMAX_DELAY))
+        {
+            Serial.print(">barometer_temperature:");
+            Serial.println(barometer_temperature);
+            Serial.print(">barometer_pressure:");
+            Serial.println(barometer_pressure);
+            Serial.print(">barometer_absoluteAltitude:");
+            Serial.println(barometer_absoluteAltitude);
+            Serial.print(">barometer_relativeAltitude:");
+            Serial.println(barometer_relativeAltitude);
+            Serial.print(">ofs_deltaX:");
+            Serial.println(ofs_deltaX);
+            Serial.print(">ofs_deltaY:");
+            Serial.println(ofs_deltaY);
+            Serial.print(">ofs_distanceX:");
+            Serial.println(ofs_distanceX);
+            Serial.print(">ofs_distanceY:");
+            Serial.println(ofs_distanceY);
+            Serial.print(">lidar_distance:");
+            Serial.println(lidar_distance);
+            Serial.print(">lidar_strength:");
+            Serial.println(lidar_strength);
+            Serial.print(">lidar_temperature:");
+            Serial.println(lidar_temperature);
+            Serial.print(">imu_ax:");
+            Serial.println(imu_ax);
+            Serial.print(">imu_ay:");
+            Serial.println(imu_ay);
+            Serial.print(">imu_az:");
+            Serial.println(imu_az);
+            Serial.print(">imu_p:");
+            Serial.println(imu_p);
+            Serial.print(">imu_q:");
+            Serial.println(imu_q);
+            Serial.print(">imu_r:");
+            Serial.println(imu_r);
+            Serial.print(">imu_roll:");
+            Serial.println(imu_roll);
+            Serial.print(">imu_pitch:");
+            Serial.println(imu_pitch);
+            Serial.print(">imu_yaw:");
+            Serial.println(imu_yaw);
+        }
+        PERF_END(sysMetrics.logger);
         vTaskDelay(pdMS_TO_TICKS(100));
     }
     vTaskDelete(nullptr);
+}
+
+void perfMonitor(void *params) {
+    char buffer[128];
+    const TickType_t delay = pdMS_TO_TICKS(1000); // 1Hz update
+
+    while(true) {
+        // Calculate Sensor Actual Rates
+        sysMetrics.barometerSensor.actualRate = (sysMetrics.barometerSensor.updateCount - sysMetrics.barometerSensor.lastCount);
+        sysMetrics.barometerSensor.lastCount = sysMetrics.barometerSensor.updateCount;
+
+        sysMetrics.imuSensor.actualRate = (sysMetrics.imuSensor.updateCount - sysMetrics.imuSensor.lastCount);
+        sysMetrics.imuSensor.lastCount = sysMetrics.imuSensor.updateCount;
+
+        sysMetrics.lidarSensor.actualRate = (sysMetrics.lidarSensor.updateCount - sysMetrics.lidarSensor.lastCount);
+        sysMetrics.lidarSensor.lastCount = sysMetrics.lidarSensor.updateCount;
+
+        // Print Table
+        if (xSemaphoreTake(serialMutex, portMAX_DELAY)) {
+            Serial.println("\n--- SYSTEM PERFORMANCE (1s) ---");
+            Serial.println("TASK    | FREQ(Hz) | EXEC(us) | LOAD(%) | DATA(Hz)");
+            
+            snprintf(buffer, sizeof(buffer), "BARO    | %6.1f   | %6lu   | %5.1f   | %5.1f", 
+                sysMetrics.barometer.frequency, sysMetrics.barometer.execTimeUs, sysMetrics.barometer.cpuLoad, sysMetrics.barometerSensor.actualRate);
+            Serial.println(buffer);
+
+            snprintf(buffer, sizeof(buffer), "IMU     | %6.1f   | %6lu   | %5.1f   | %5.1f", 
+                sysMetrics.imu.frequency, sysMetrics.imu.execTimeUs, sysMetrics.imu.cpuLoad, sysMetrics.imuSensor.actualRate);
+            Serial.println(buffer);
+
+            snprintf(buffer, sizeof(buffer), "EKF     | %6.1f   | %6lu   | %5.1f   | N/A", 
+                sysMetrics.ekf.frequency, sysMetrics.ekf.execTimeUs, sysMetrics.ekf.cpuLoad);
+            Serial.println(buffer);
+
+            snprintf(buffer, sizeof(buffer), "ESC     | %6.1f   | %6lu   | %5.1f   | N/A", 
+                sysMetrics.esc.frequency, sysMetrics.esc.execTimeUs, sysMetrics.esc.cpuLoad);
+            Serial.println(buffer);
+            
+            snprintf(buffer, sizeof(buffer), "LIDAR   | %6.1f   | %6lu   | %5.1f   | %5.1f", 
+                sysMetrics.lidar.frequency, sysMetrics.lidar.execTimeUs, sysMetrics.lidar.cpuLoad, sysMetrics.lidarSensor.actualRate);
+            Serial.println(buffer);
+
+            snprintf(buffer, sizeof(buffer), "FIBER   | %6.1f   | %6lu   | %5.1f   | N/A", 
+                sysMetrics.fiber.frequency, sysMetrics.fiber.execTimeUs, sysMetrics.fiber.cpuLoad);
+            Serial.println(buffer);
+
+            Serial.println("------------------------------------");
+            xSemaphoreGive(serialMutex);
+        }
+        vTaskDelay(delay);
+    }
 }
