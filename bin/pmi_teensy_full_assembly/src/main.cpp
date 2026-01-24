@@ -126,7 +126,7 @@ void setup() {
     xTaskCreate(lidar, "lidar", 2048, nullptr, 2, nullptr);
     xTaskCreate(fiber, "fiber", 2048, nullptr, 2, nullptr);
     xTaskCreate(esc, "esc", 2048, nullptr, 2, nullptr);
-    xTaskCreate(logger, "logger", 2048, nullptr, 2, nullptr);
+    // xTaskCreate(logger, "logger", 2048, nullptr, 2, nullptr);
     xTaskCreate(perfMonitor, "perfMonitor", 2048, nullptr, 1, nullptr);
 
     // Run tasks

@@ -144,7 +144,7 @@ void lidar(void *params)
                         strength = buffer[2] + (buffer[3] << 8);
                         temperature = (buffer[4] + (buffer[5] << 8)) / 8.0 - 256.0;
 
-                        if (xSemaphoreTake(lidarMutex, portMAX_DELAY))
+                        if (xSemaphoreTake(lidarMutex, portMAX_DELAY) && distance < 10000)
                         {
                             lidarData.distance = distance;
                             lidarData.strength = strength;
@@ -200,7 +200,7 @@ void imu(void *params)
             setReports();
         }
 
-        // Lock SPI (or I2C)
+        // Lock SPI
         if (xSemaphoreTake(spi1Mutex, portMAX_DELAY))
         {
             if (bno08x.getSensorEvent(&sensorValue))
@@ -650,6 +650,7 @@ void logger(void *params)
             Serial.println(imu_pitch);
             Serial.print(">imu_yaw:");
             Serial.println(imu_yaw);
+            xSemaphoreGive(serialMutex);
         }
         PERF_END(sysMetrics.logger);
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -677,27 +678,31 @@ void perfMonitor(void *params) {
             Serial.println("\n--- SYSTEM PERFORMANCE (1s) ---");
             Serial.println("TASK    | FREQ(Hz) | EXEC(us) | LOAD(%) | DATA(Hz)");
             
-            snprintf(buffer, sizeof(buffer), "BARO    | %6.1f   | %6lu   | %5.1f   | %5.1f", 
+            snprintf(buffer, sizeof(buffer), "BARO    | %6.1f   | %6lu   | %5.2f   | %5.1f", 
                 sysMetrics.barometer.frequency, sysMetrics.barometer.execTimeUs, sysMetrics.barometer.cpuLoad, sysMetrics.barometerSensor.actualRate);
             Serial.println(buffer);
+            
+            snprintf(buffer, sizeof(buffer), "OFS    | %6.1f   | %6lu   | %5.2f   | %5.1f", 
+                sysMetrics.ofs.frequency, sysMetrics.ofs.execTimeUs, sysMetrics.ofs.cpuLoad, sysMetrics.ofsSensor.actualRate);
+            Serial.println(buffer);
 
-            snprintf(buffer, sizeof(buffer), "IMU     | %6.1f   | %6lu   | %5.1f   | %5.1f", 
+            snprintf(buffer, sizeof(buffer), "IMU     | %6.1f   | %6lu   | %5.2f   | %5.1f", 
                 sysMetrics.imu.frequency, sysMetrics.imu.execTimeUs, sysMetrics.imu.cpuLoad, sysMetrics.imuSensor.actualRate);
             Serial.println(buffer);
 
-            snprintf(buffer, sizeof(buffer), "EKF     | %6.1f   | %6lu   | %5.1f   | N/A", 
+            snprintf(buffer, sizeof(buffer), "EKF     | %6.1f   | %6lu   | %5.2f   | N/A", 
                 sysMetrics.ekf.frequency, sysMetrics.ekf.execTimeUs, sysMetrics.ekf.cpuLoad);
             Serial.println(buffer);
 
-            snprintf(buffer, sizeof(buffer), "ESC     | %6.1f   | %6lu   | %5.1f   | N/A", 
+            snprintf(buffer, sizeof(buffer), "ESC     | %6.1f   | %6lu   | %5.2f   | N/A", 
                 sysMetrics.esc.frequency, sysMetrics.esc.execTimeUs, sysMetrics.esc.cpuLoad);
             Serial.println(buffer);
             
-            snprintf(buffer, sizeof(buffer), "LIDAR   | %6.1f   | %6lu   | %5.1f   | %5.1f", 
+            snprintf(buffer, sizeof(buffer), "LIDAR   | %6.1f   | %6lu   | %5.2f   | %5.1f", 
                 sysMetrics.lidar.frequency, sysMetrics.lidar.execTimeUs, sysMetrics.lidar.cpuLoad, sysMetrics.lidarSensor.actualRate);
             Serial.println(buffer);
 
-            snprintf(buffer, sizeof(buffer), "FIBER   | %6.1f   | %6lu   | %5.1f   | N/A", 
+            snprintf(buffer, sizeof(buffer), "FIBER   | %6.1f   | %6lu   | %5.2f   | N/A", 
                 sysMetrics.fiber.frequency, sysMetrics.fiber.execTimeUs, sysMetrics.fiber.cpuLoad);
             Serial.println(buffer);
 
