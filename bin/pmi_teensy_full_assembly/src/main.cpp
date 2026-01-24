@@ -120,13 +120,14 @@ void setup() {
     }
 
     // Create tasks
-    if (baroInit) xTaskCreate(barometer, "barometer", 4096, nullptr, 2, nullptr);
-    if (ofsInit) xTaskCreate(ofs, "ofs", 4096, nullptr, 2, nullptr);
-    if (imuInit) xTaskCreate(imu, "imu", 4096, nullptr, 1, nullptr);
-    xTaskCreate(lidar, "lidar", 2048, nullptr, 2, nullptr);
+    if (baroInit) xTaskCreate(barometer, "barometer", 4096, nullptr, 3, nullptr);
+    if (ofsInit) xTaskCreate(ofs, "ofs", 4096, nullptr, 3, nullptr);
+    if (imuInit) xTaskCreate(imu, "imu", 4096, nullptr, 5, nullptr);
+    xTaskCreate(lidar, "lidar", 2048, nullptr, 4, nullptr);
+    xTaskCreate(ekf, "ekf", 2048, nullptr, 5, nullptr);
     xTaskCreate(fiber, "fiber", 2048, nullptr, 2, nullptr);
     xTaskCreate(esc, "esc", 2048, nullptr, 2, nullptr);
-    // xTaskCreate(logger, "logger", 2048, nullptr, 2, nullptr);
+    xTaskCreate(logger, "logger", 2048, nullptr, 1, nullptr);
     xTaskCreate(perfMonitor, "perfMonitor", 2048, nullptr, 1, nullptr);
 
     // Run tasks

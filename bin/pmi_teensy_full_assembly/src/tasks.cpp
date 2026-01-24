@@ -75,22 +75,22 @@ void ofs(void *params)
     while (true)
     {
         PERF_START(sysMetrics.ofs);
-
+        
         // Read delta X and delta Y
         flow.readMotionCount(&deltaX, &deltaY);
-
+        
         // Read lidar distance
         if (xSemaphoreTake(lidarMutex, portMAX_DELAY))
         {
             height = lidarData.distance;
             xSemaphoreGive(lidarMutex);
         }
-
+        
         // Compute movement
         scaleFactor = (2 * height * tan(fov / 2.0)) / (pixelsCount * resolution);
         distanceX = deltaX * scaleFactor;
         distanceY = deltaY * scaleFactor;
-
+        
         // Update data
         if (xSemaphoreTake(ofsMutex, portMAX_DELAY))
         {
@@ -100,9 +100,9 @@ void ofs(void *params)
             ofsData.distanceY = distanceY;
             xSemaphoreGive(ofsMutex);
         }
-
-        if(deltaX != 0 || deltaY != 0) sysMetrics.ofsSensor.updateCount++;
-
+        
+        sysMetrics.ofsSensor.updateCount++;
+        
         PERF_END(sysMetrics.ofs);
         vTaskDelay(pdMS_TO_TICKS(20));
     }
@@ -112,50 +112,55 @@ void ofs(void *params)
 
 void lidar(void *params)
 {
-    // Init
-    int distance; // In mm
-    int strength;
-    float temperature; // In *C
+    int distance, strength;
+    float temperature;
+    uint8_t buf[9]; 
 
-    // Loop
     while (true)
     {
         PERF_START(sysMetrics.lidar);
 
-        if (Serial2.available() >= 9)
+        // ROBUST PARSING: Drain buffer until we find the 0x59 0x59 header
+        while (Serial2.available() >= 9) 
         {
-            if (Serial2.read() == 0x59)
+            if (Serial2.peek() == 0x59) 
             {
-                if (Serial2.read() == 0x59)
+                Serial2.read(); // Consume first 0x59
+                if (Serial2.peek() == 0x59) 
                 {
-                    uint8_t buffer[7];
-                    Serial2.readBytes(buffer, 7);
-
-                    // Verify Checksum
+                    Serial2.read(); // Consume second 0x59
+                    
+                    // We found the header! Now read the payload.
+                    // Packet is 9 bytes total. We ate 2. Need 7 more.
+                    Serial2.readBytes(buf, 7);
+                    
                     uint8_t checksum = 0x59 + 0x59;
-                    for (int i = 0; i < 6; i++)
-                    {
-                        checksum += buffer[i];
-                    }
+                    for (int i = 0; i < 6; i++) checksum += buf[i];
 
-                    if (checksum == buffer[6])
+                    if (checksum == buf[6])
                     {
-                        distance = (buffer[0] + (buffer[1] << 8)) * 10;
-                        strength = buffer[2] + (buffer[3] << 8);
-                        temperature = (buffer[4] + (buffer[5] << 8)) / 8.0 - 256.0;
+                        distance = buf[0] + (buf[1] << 8);
+                        strength = buf[2] + (buf[3] << 8);
+                        temperature = (buf[4] + (buf[5] << 8)) / 8.0 - 256.0;
 
-                        if (xSemaphoreTake(lidarMutex, portMAX_DELAY) && distance < 10000)
+                        if (xSemaphoreTake(lidarMutex, portMAX_DELAY))
                         {
-                            lidarData.distance = distance;
+                            lidarData.distance = distance; // Unit: cm? Check datasheet (usually cm)
                             lidarData.strength = strength;
                             lidarData.temperature = temperature;
                             xSemaphoreGive(lidarMutex);
+                            
+                            sysMetrics.lidarSensor.updateCount++;
                         }
-                        sysMetrics.lidarSensor.updateCount++;
                     }
                 }
+            } 
+            else 
+            {
+                Serial2.read(); 
             }
         }
+        
         PERF_END(sysMetrics.lidar);
         vTaskDelay(pdMS_TO_TICKS(20));
     }
@@ -325,7 +330,7 @@ void ekf(void *pvParameters)
     for (;;)
     {
         PERF_START(sysMetrics.ekf);
-        
+
         if (xSemaphoreTake(imuMutex, portMAX_DELAY)) {
             imu = imuData;
             xSemaphoreGive(imuMutex);
@@ -588,7 +593,6 @@ void logger(void *params)
             lidar_distance = lidarData.distance;
             lidar_strength = lidarData.strength;
             lidar_temperature = lidarData.temperature;
-
             xSemaphoreGive(lidarMutex);
         }
 
@@ -666,6 +670,9 @@ void perfMonitor(void *params) {
         // Calculate Sensor Actual Rates
         sysMetrics.barometerSensor.actualRate = (sysMetrics.barometerSensor.updateCount - sysMetrics.barometerSensor.lastCount);
         sysMetrics.barometerSensor.lastCount = sysMetrics.barometerSensor.updateCount;
+        
+        sysMetrics.ofsSensor.actualRate = (sysMetrics.ofsSensor.updateCount - sysMetrics.ofsSensor.lastCount);
+        sysMetrics.ofsSensor.lastCount = sysMetrics.ofsSensor.updateCount;
 
         sysMetrics.imuSensor.actualRate = (sysMetrics.imuSensor.updateCount - sysMetrics.imuSensor.lastCount);
         sysMetrics.imuSensor.lastCount = sysMetrics.imuSensor.updateCount;

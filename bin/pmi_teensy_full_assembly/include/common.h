@@ -27,22 +27,27 @@ using arduino::OUTPUT;
 
 // Performance measurement macros
 // Place at start of loop
-#define PERF_START(metric)                           \
-    uint32_t _pStart = micros();                     \
-    if (metric.lastStart > 0)                        \
-    {                                                \
-        uint32_t _diff = _pStart - metric.lastStart; \
-        if (_diff > 0)                               \
-            metric.frequency = 1000000.0f / _diff;   \
-    }                                                \
+#define PERF_START(metric)                                         \
+    uint32_t _pStart = ARM_DWT_CYCCNT;                             \
+    uint32_t _totalCycles = 0;                                     \
+    if (metric.lastStart > 0)                                      \
+    {                                                              \
+        _totalCycles = _pStart - metric.lastStart;                 \
+        /* Frequency = ClockSpeed / CyclesDiff */                  \
+        if (_totalCycles > 0)                                      \
+            metric.frequency = 600000000.0f / (float)_totalCycles; \
+    }                                                              \
     metric.lastStart = _pStart;
 
-// Place before vTaskDelay
-#define PERF_END(metric)                                                            \
-    uint32_t _pEnd = micros();                                                      \
-    metric.execTimeUs = _pEnd - _pStart;                                            \
-    float _periodUs = (1000000.0f / (metric.frequency > 0 ? metric.frequency : 1)); \
-    metric.cpuLoad = ((float)metric.execTimeUs / _periodUs) * 100.0f;
+#define PERF_END(metric)                                                      \
+    uint32_t _pEnd = ARM_DWT_CYCCNT;                                          \
+    uint32_t _execCycles = _pEnd - _pStart;                                   \
+    metric.execTimeUs = _execCycles / 600;                                    \
+    /* CPU Load = (ExecutionCycles / TotalPeriodCycles) * 100 */              \
+    if (_totalCycles > 0)                                                     \
+    {                                                                         \
+        metric.cpuLoad = ((float)_execCycles / (float)_totalCycles) * 100.0f; \
+    }
 
 // Serial config
 #define SERIAL_BAUD 115200
