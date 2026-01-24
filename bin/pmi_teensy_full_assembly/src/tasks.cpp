@@ -689,7 +689,7 @@ void perfMonitor(void *params) {
                 sysMetrics.barometer.frequency, sysMetrics.barometer.execTimeUs, sysMetrics.barometer.cpuLoad, sysMetrics.barometerSensor.actualRate);
             Serial.println(buffer);
             
-            snprintf(buffer, sizeof(buffer), "OFS    | %6.1f   | %6lu   | %5.2f   | %5.1f", 
+            snprintf(buffer, sizeof(buffer), "OFS     | %6.1f   | %6lu   | %5.2f   | %5.1f", 
                 sysMetrics.ofs.frequency, sysMetrics.ofs.execTimeUs, sysMetrics.ofs.cpuLoad, sysMetrics.ofsSensor.actualRate);
             Serial.println(buffer);
 
