@@ -80,7 +80,7 @@ DPS310 -> Teensy 4.1:
     - SCK -> 27
     - SDO -> 39
     - SDI -> 26
-    - CS  -> 10
+    - CS  -> 40
 
 BNO085 -> Teensy 4.1:
     - VIN -> 3V
@@ -110,6 +110,18 @@ TF-Luna -> Teensy 4.1:
     - Blue Wire (2) -> 8
     - Blue Wire (3) -> 7
     - Black Wire    -> GND
+
+TEL0153 -> Teensy 4.1:
+    - + -> 3V
+    - - -> GND
+    - R -> 14
+    - T -> 15
+
+ESC -> Teensy 4.1:
+    - 1 -> 2
+    - 1 -> 3
+    - 1 -> 4
+    - 1 -> 5
 */
 
 // Performance metrics structs

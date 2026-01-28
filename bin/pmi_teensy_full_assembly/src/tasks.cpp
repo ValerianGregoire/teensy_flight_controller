@@ -264,7 +264,7 @@ void imu(void *params)
         }
 
         PERF_END(sysMetrics.imu);
-        vTaskDelay(pdMS_TO_TICKS(5)); // 200 Hz
+        vTaskDelay(pdMS_TO_TICKS(2)); // 200 Hz
     }
     vTaskDelete(nullptr);
 }
@@ -321,7 +321,7 @@ void ekf(void *pvParameters)
     C_baro(0,2) = 1;
 
     TickType_t last = xTaskGetTickCount();
-    const TickType_t period = pdMS_TO_TICKS(10);
+    const TickType_t period = pdMS_TO_TICKS(2);
 
     IMUData imu;
     BarometerData baro;
@@ -501,7 +501,7 @@ void esc(void *params)
     m4.writeMicroseconds(1000);
     vTaskDelay(2000 / portTICK_PERIOD_MS);
 
-    const TickType_t xDelay = 5 / portTICK_PERIOD_MS; // 200Hz Update rate
+    const TickType_t xDelay = 2 / portTICK_PERIOD_MS; // 200Hz Update rate
 
     while (true)
     {
